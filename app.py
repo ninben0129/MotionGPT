@@ -47,31 +47,24 @@ forced_decoder_ids_en = audio_processor.get_decoder_prompt_ids(language="en", ta
 # HTML Style
 Video_Components = """
 <div class="side-video" style="position: relative;">
-    <video width="340" autoplay loop>
-        <source src="file/{video_path}" type="video/mp4">
+    <video width="340" autoplay muted playsinline loop>
+        <source src="file={video_path}" type="video/mp4">
     </video>
-    <a class="videodl-button" href="file/{video_path}" download="{video_fname}" title="Download Video">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-video"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
-    </a>
-    <a class="npydl-button" href="file/{motion_path}" download="{motion_fname}" title="Download Motion">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-box"><path d="M14.5 22H18a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="M2.97 13.12c-.6.36-.97 1.02-.97 1.74v3.28c0 .72.37 1.38.97 1.74l3 1.83c.63.39 1.43.39 2.06 0l3-1.83c.6-.36.97-1.02.97-1.74v-3.28c0-.72-.37-1.38-.97-1.74l-3-1.83a1.97 1.97 0 0 0-2.06 0l-3 1.83Z"/><path d="m7 17-4.74-2.85"/><path d="m7 17 4.74-2.85"/><path d="M7 17v5"/></svg>
-    </a>
+    <a class="videodl-button" href="file={video_path}" download="{video_fname}" title="Download Video"> ... </a>
+    <a class="npydl-button" href="file={motion_path}" download="{motion_fname}" title="Download Motion"> ... </a>
 </div>
 """
+
 
 Video_Components_example = """
 <div class="side-video" style="position: relative;">
-    <video width="340" autoplay loop controls>
-        <source src="file/{video_path}" type="video/mp4">
+    <video width="340" autoplay muted playsinline loop controls>
+        <source src="file={video_path}" type="video/mp4">
     </video>
-    <a class="npydl-button" href="file/{video_path}" download="{video_fname}" title="Download Video">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-video"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+    <a class="npydl-button" href="file={video_path}" download="{video_fname}" title="Download Video">
+        ...
     </a>
 </div>
-"""
-
-Text_Components = """
-<h3 class="side-content" >{msg}</h3>
 """
 
 
@@ -233,28 +226,40 @@ def add_file(history, file, txt, motion_uploaded):
 
 
 def bot(history, motion_uploaded, data_stored, method):
+    """
+    Gradio 5.x では Chatbot への HTML ストリーミング（yield）が <video> 埋め込みと相性が悪い。
+    ここでは一括でメッセージを返す（return のみ）ように修正している。
+    """
 
-    motion_length, motion_token_string = motion_uploaded[
-        "motion_lengths"], motion_uploaded["motion_token_string"]
+    # --- 入力の準備 ---
+    # motion 情報（長さ・トークン文字列）は無い場合もあるので .get で安全に取得
+    motion_length = motion_uploaded.get("motion_lengths", 0) or 0
+    motion_token_string = motion_uploaded.get("motion_token_string", "") or ""
 
-    input = data_stored[-1]['user_input']
-    prompt = model.lm.placeholder_fulfill(input, motion_length,
-                                          motion_token_string, "")
+    user_input = data_stored[-1]['user_input']
+    prompt = model.lm.placeholder_fulfill(user_input, motion_length, motion_token_string, "")
     data_stored[-1]['model_input'] = prompt
+
     batch = {
         "length": [motion_length],
-        "text": [prompt],
+        "text":   [prompt],
     }
 
+    # --- 推論 ---
     outputs = model(batch, task="t2m")
-    out_feats = outputs["feats"][0]
+    out_feats   = outputs["feats"][0]
     out_lengths = outputs["length"][0]
-    out_joints = outputs["joints"][:out_lengths].detach().cpu().numpy()
-    out_texts = outputs["texts"][0]
+    out_joints  = outputs["joints"][:out_lengths].detach().cpu().numpy()
+    out_texts   = outputs["texts"][0]
+
+    # --- 可視化レンダリング（gif→mp4 生成） ---
     output_mp4_path, video_fname, output_npy_path, joints_fname = render_motion(
         out_joints,
-        out_feats.to('cpu').numpy(), method)
+        out_feats.to('cpu').numpy(),
+        method
+    )
 
+    # --- 次回のためにアップロード状態をクリア ---
     motion_uploaded = {
         "feats": None,
         "joints": None,
@@ -265,43 +270,37 @@ def bot(history, motion_uploaded, data_stored, method):
         "motion_token_length": 0,
     }
 
-    data_stored[-1]['model_output'] = {
-        "feats": out_feats,
-        "joints": out_joints,
-        "length": out_lengths,
-        "texts": out_texts,
-        "motion_video": output_mp4_path,
-        "motion_video_fname": video_fname,
-        "motion_joints": output_npy_path,
-        "motion_joints_fname": joints_fname,
-    }
-
+    # --- 応答 HTML の構築（※ Chatbot へは一括で返す） ---
     if '<Motion_Placeholder>' == out_texts:
-        response = [
-            Video_Components.format(video_path=output_mp4_path,
-                                    video_fname=video_fname,
-                                    motion_path=output_npy_path,
-                                    motion_fname=joints_fname)
+        response_parts = [
+            Video_Components.format(
+                video_path=output_mp4_path,      # 例: "file=/abs/or/rel/path.mp4" で扱われる
+                video_fname=video_fname,
+                motion_path=output_npy_path,
+                motion_fname=joints_fname
+            )
         ]
     elif '<Motion_Placeholder>' in out_texts:
-        response = [
-            Text_Components.format(
-                msg=out_texts.split("<Motion_Placeholder>")[0]),
-            Video_Components.format(video_path=output_mp4_path,
-                                    video_fname=video_fname,
-                                    motion_path=output_npy_path,
-                                    motion_fname=joints_fname),
-            Text_Components.format(
-                msg=out_texts.split("<Motion_Placeholder>")[1]),
+        before, after = out_texts.split("<Motion_Placeholder>", 1)
+        response_parts = [
+            Text_Components.format(msg=before),
+            Video_Components.format(
+                video_path=output_mp4_path,
+                video_fname=video_fname,
+                motion_path=output_npy_path,
+                motion_fname=joints_fname
+            ),
+            Text_Components.format(msg=after),
         ]
     else:
-        response = f"""<h3>{out_texts}</h3>"""
+        response_parts = [f"<h3>{out_texts}</h3>"]
 
-    history[-1][1] = ""
-    for character in response:
-        history[-1][1] += character
-        time.sleep(0.02)
-        yield history, motion_uploaded, data_stored
+    # 直前ユーザ発話に対するボット側の返答（右側）を一括で差し替え
+    # history の最後の要素は (ユーザ側HTML, ボット側HTML) のタプル
+    history[-1] = (history[-1][0], "".join(response_parts))
+
+    # 一括 return（yield は使わない）
+    return history, motion_uploaded, data_stored
 
 
 def bot_example(history, responses):
@@ -493,13 +492,17 @@ with gr.Blocks(css=customCSS) as demo:
 
     gr.Markdown("# MotionGPT")
 
-    chatbot = gr.Chatbot(Init_chatbot,
-                         elem_id="mGPT",
-                         height=600,
-                         label="MotionGPT",
-                         avatar_images=(None,
-                                        ("assets/images/avatar_bot.jpg")),
-                         bubble_full_width=False)
+    chatbot = gr.Chatbot(
+    Init_chatbot,
+    elem_id="mGPT",
+    height=600,
+    label="MotionGPT",
+    avatar_images=(None, ("assets/images/avatar_bot.jpg")),
+    bubble_full_width=False,
+    render_markdown=True,     # 必要に応じて
+    sanitize_html=False       # ← これを追加
+    )
+
 
     with gr.Row():
         with gr.Column(scale=0.85):
