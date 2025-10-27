@@ -513,7 +513,7 @@ with gr.Blocks(css=customCSS) as demo:
                     container=False)
 
             with gr.Row():
-                aud = gr.Audio(source="microphone",
+                aud = gr.Audio(sources=["microphone"],
                                label="Speak input",
                                type='filepath')
                 btn = gr.UploadButton("📁 Upload motion",

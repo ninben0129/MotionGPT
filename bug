@@ -1,0 +1,20 @@
+python -m pip install moviepy==1.0.3
+
+pip install gdown
+export PATH="$HOME/.local/bin:$PATH"
+
+sudo apt update
+sudo apt install git-lfs
+git lfs install
+
+pip install bert-score
+
+huggingface-cli login
+
+whisper problem
+https://github.com/OpenMotionLab/MotionGPT/issues/51
+
+# app.py, line 516
+aud = gr.Audio(source="microphone", # <-- この 'source' 引数がエラーの原因
+               label="Speak input",
+               type='filepath')
