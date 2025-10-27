@@ -1,0 +1,7 @@
+# Hugging Faceやモデルの依存関係のダウンロード先
+deps/
+
+# MotionGPTやPyTorch Lightningのキャッシュファイル
+cache/
+
+mGPT/
